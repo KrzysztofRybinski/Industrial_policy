@@ -1,7 +1,7 @@
 """Event study estimation."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -82,6 +82,10 @@ def estimate_event_study(
     Returns:
         Tuple of (coefficients dataframe, metadata).
     """
+    logger = get_logger()
+    if outcome not in stacked.columns:
+        logger.warning("Outcome %s not found in stacked data", outcome)
+        return pd.DataFrame(), {}
     df = stacked.dropna(subset=[outcome]).copy()
     if df.empty:
         return pd.DataFrame(), {}
@@ -104,19 +108,38 @@ def estimate_event_study(
     coeffs = []
     for name, value in results.params.items():
         if name.startswith("event_"):
+            pvalue = results.pvalues.get(name, float("nan"))
             coeffs.append(
                 {
                     "event_time_q": int(name.split("_")[-1]),
-                    "coef": value,
+                    "beta": value,
                     "se": results.bse[name],
+                    "pvalue": pvalue,
                 }
             )
     coef_df = pd.DataFrame(coeffs).sort_values("event_time_q")
-    coef_df["ci_lower"] = coef_df["coef"] - 1.96 * coef_df["se"]
-    coef_df["ci_upper"] = coef_df["coef"] + 1.96 * coef_df["se"]
+    coef_df["ci_low"] = coef_df["beta"] - 1.96 * coef_df["se"]
+    coef_df["ci_high"] = coef_df["beta"] + 1.96 * coef_df["se"]
+
+    pretrend_names = []
+    for col in event_dummies.columns:
+        try:
+            event_time = int(col.split("_")[-1])
+        except ValueError:
+            continue
+        if event_time <= -2 and col in results.params.index:
+            pretrend_names.append(col)
+    pretrend_pvalue = None
+    if pretrend_names:
+        constraints = ", ".join([f"{name} = 0" for name in pretrend_names])
+        try:
+            pretrend_pvalue = float(results.f_test(constraints).pvalue)
+        except Exception:  # pragma: no cover - guard against singular models
+            pretrend_pvalue = None
 
     metadata = {
         "n_obs": float(len(df)),
         "n_firms": float(df["cik"].nunique()),
+        "pretrend_pvalue": pretrend_pvalue,
     }
     return coef_df, metadata

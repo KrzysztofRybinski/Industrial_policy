@@ -24,7 +24,9 @@ usaspending:
     - "Award Description"
     - "Recipient DUNS Number"
   page_size: 100
-  max_pages: 99999
+  max_pages: 2000
+  max_records: null
+  request_timeout_seconds: 60
   subawards: false
 
 sec:
@@ -59,6 +61,8 @@ analysis:
     - markup_rev_cogs
     - capex_intensity
     - ppe_growth
+    - sga_intensity
+    - rd_intensity
   cluster: "firm"
   add_controls: true
   control_vars:

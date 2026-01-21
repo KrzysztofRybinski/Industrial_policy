@@ -5,13 +5,14 @@ description = "Industrial policy subsidy to markup pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-authors = [{name = "OpenAI Codex"}]
+authors = [{name = "Krzysztof Rybinski"}]
 dependencies = [
   "duckdb",
   "linearmodels",
   "matplotlib",
   "numpy",
   "pandas",
+  "python-dotenv>=1.0",
   "pyarrow",
   "pyyaml",
   "rapidfuzz",
@@ -22,6 +23,9 @@ dependencies = [
   "tqdm",
   "typer[all]",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
 industrial-policy = "industrial_policy.cli:app"

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dotenv import load_dotenv
 import pandas as pd
 import typer
 
 from industrial_policy.analysis.did import run_event_studies
 from industrial_policy.analysis.outputs import save_event_study_outputs
+from industrial_policy.analysis.sample_report import write_sample_construction_report
 from industrial_policy.config import load_config
 from industrial_policy.entity.name_matching import match_recipients
 from industrial_policy.entity.sec_company_lookup import fetch_company_lookup
@@ -18,9 +20,12 @@ from industrial_policy.ingest.eu_state_aid import load_eu_state_aid
 from industrial_policy.ingest.sec_fsds import fetch_sec_fsds
 from industrial_policy.ingest.usaspending import fetch_usaspending_awards
 from industrial_policy.log import setup_logging
+from industrial_policy.match.diagnostics import write_matching_diagnostics
 from industrial_policy.match.nearest_neighbor import nearest_neighbor_match
 from industrial_policy.match.propensity import build_propensity_scores
 from industrial_policy.viz.event_study_plots import plot_event_study
+
+load_dotenv()
 
 app = typer.Typer(add_completion=False)
 ingest_app = typer.Typer()
@@ -114,6 +119,8 @@ def estimate_cmd(config_path: Path = ingest_config_option) -> None:
         coef_df = payload["coefficients"]
         if not coef_df.empty:
             plot_event_study(coef_df, outcome, config["project"]["outputs_dir"])
+    write_sample_construction_report(config, config["project"]["outputs_dir"])
+    write_matching_diagnostics(config, config["project"]["outputs_dir"])
 
 
 @app.command("all")

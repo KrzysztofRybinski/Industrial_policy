@@ -1,11 +1,14 @@
 """USAspending ingestion."""
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Set
 
 import pandas as pd
 import requests
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from industrial_policy.log import get_logger
 from industrial_policy.utils.textnorm import normalize_name
@@ -19,6 +22,21 @@ def _snake_case(name: str) -> str:
         .replace("/", "_")
         .lower()
     )
+
+
+@retry(
+    retry=retry_if_exception_type(requests.RequestException),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+def _post_with_retry(
+    session: requests.Session,
+    url: str,
+    payload: Dict[str, Any],
+    timeout: int,
+) -> requests.Response:
+    return session.post(url, json=payload, timeout=timeout)
 
 
 def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
@@ -42,7 +60,12 @@ def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
     url = f"{base_url}/{endpoint}"
 
     page = 1
-    rows = []
+    rows: List[Dict[str, Any]] = []
+    seen_signatures: Set[tuple] = set()
+    stop_reason: Optional[str] = None
+    max_pages = api_config.get("max_pages", 99999)
+    max_records = api_config.get("max_records")
+    request_timeout = api_config.get("request_timeout_seconds", 60)
     session = requests.Session()
     while True:
         payload = {
@@ -53,32 +76,66 @@ def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
             "subawards": api_config.get("subawards", False),
         }
         logger.info("Fetching USAspending page %s", page)
-        response = session.post(url, json=payload, timeout=60)
+        response = _post_with_retry(session, url, payload, request_timeout)
         response.raise_for_status()
         data = response.json()
         results = data.get("results", [])
         if not results:
+            stop_reason = "empty_page"
             break
+        signature = tuple(sorted(str(item.get("Award ID", "")) for item in results))
+        if signature in seen_signatures:
+            stop_reason = "repeated_page"
+            break
+        seen_signatures.add(signature)
         rows.extend(results)
-        page += 1
-        if page > api_config.get("max_pages", 99999):
+        logger.info(
+            "USAspending page %s returned %s rows (cumulative %s)",
+            page,
+            len(results),
+            len(rows),
+        )
+        if max_records is not None and len(rows) >= max_records:
+            stop_reason = "max_records"
+            rows = rows[:max_records]
             break
+        page += 1
+        if page > max_pages:
+            stop_reason = "max_pages"
+            break
+
+    if stop_reason:
+        logger.info("Stopping USAspending ingestion due to %s", stop_reason)
 
     df = pd.DataFrame(rows)
     if df.empty:
         logger.warning("No USAspending awards returned")
-        df.to_parquet(output_path, index=False)
-        return df
+    else:
+        df.columns = [_snake_case(col) for col in df.columns]
+        date_cols = ["start_date", "end_date"]
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    df.columns = [_snake_case(col) for col in df.columns]
-    date_cols = ["start_date", "end_date"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-    if "recipient_name" in df.columns:
-        df["recipient_name_norm"] = df["recipient_name"].fillna("").map(normalize_name)
+        if "recipient_name" in df.columns:
+            df["recipient_name_norm"] = df["recipient_name"].fillna("").map(normalize_name)
 
     df.to_parquet(output_path, index=False)
     logger.info("Saved awards to %s", output_path)
+    pages_pulled = len(seen_signatures)
+    manifest = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "filters": payload["filters"],
+        "fields": payload["fields"],
+        "page_size": payload["limit"],
+        "subawards": payload["subawards"],
+        "request_timeout_seconds": request_timeout,
+        "total_pages": pages_pulled,
+        "total_rows": len(df),
+        "stop_reason": stop_reason,
+    }
+    manifest_path = Path(project["outputs_dir"]) / "logs" / "usaspending_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    logger.info("Saved USAspending manifest to %s", manifest_path)
     return df
