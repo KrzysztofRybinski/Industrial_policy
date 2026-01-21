@@ -31,6 +31,10 @@ def compute_financial_features(df: pd.DataFrame, winsor_limits: Tuple[float, flo
     df["markup_rev_cogs"] = df["revenue"] / df["cogs"]
     df["capex"] = df["capex_cash"].abs()
     df["capex_intensity"] = df["capex"] / df["revenue"]
+    df["sga"] = df["sga"] if "sga" in df.columns else np.nan
+    df["rd"] = df["rd"] if "rd" in df.columns else np.nan
+    df["sga_intensity"] = df["sga"] / df["revenue"]
+    df["rd_intensity"] = df["rd"] / df["revenue"]
 
     df = df.sort_values(["cik", "period_end_date"]).copy()
     df["ppe_growth"] = np.log(df["ppe_net"]) - np.log(df.groupby("cik")["ppe_net"].shift(1))
@@ -42,6 +46,8 @@ def compute_financial_features(df: pd.DataFrame, winsor_limits: Tuple[float, flo
         "markup_rev_cogs",
         "capex_intensity",
         "ppe_growth",
+        "sga_intensity",
+        "rd_intensity",
     ]
     for col in ratio_cols:
         df[f"{col}_winsor"] = winsorize(df[col], *winsor_limits)

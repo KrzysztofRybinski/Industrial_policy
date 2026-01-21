@@ -15,3 +15,8 @@ ppe_net:
 capex_cash:
   - PaymentsToAcquirePropertyPlantAndEquipment
   - PaymentsToAcquireProductiveAssets
+sga:
+  - SellingGeneralAndAdministrativeExpense
+  - SellingGeneralAndAdministrativeExpenseExcludingNonrecurringItems
+rd:
+  - ResearchAndDevelopmentExpense

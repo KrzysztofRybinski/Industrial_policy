@@ -1,6 +1,7 @@
 """Configuration loader."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict
@@ -24,9 +25,11 @@ def load_config(path: str | Path) -> Dict[str, Any]:
     with config_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle) or {}
 
+    logger = logging.getLogger(__name__)
     sec_user_agent = os.getenv("SEC_USER_AGENT")
     if sec_user_agent:
         config.setdefault("sec", {})["user_agent"] = sec_user_agent
+        logger.info("SEC_USER_AGENT set; overriding config value")
 
     project = config.setdefault("project", {})
     data_dir = Path(project.get("data_dir", "data"))

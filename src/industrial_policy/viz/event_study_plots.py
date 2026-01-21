@@ -26,19 +26,25 @@ def plot_event_study(coef_df: pd.DataFrame, outcome: str, outputs_dir: str) -> P
     fig_path = figures_dir / f"event_study_{outcome}.png"
 
     plt.figure(figsize=(8, 4))
+    yerr = [
+        coef_df["beta"] - coef_df["ci_low"],
+        coef_df["ci_high"] - coef_df["beta"],
+    ]
     plt.errorbar(
         coef_df["event_time_q"],
-        coef_df["coef"],
-        yerr=1.96 * coef_df["se"],
+        coef_df["beta"],
+        yerr=yerr,
         fmt="o",
         color="tab:blue",
         ecolor="lightgray",
+        label="Estimate (95% CI)",
     )
-    plt.axvline(-1, color="black", linestyle="--", linewidth=1)
+    plt.axvline(-1, color="black", linestyle="--", linewidth=1, label="Baseline (t=-1)")
     plt.axvline(0, color="black", linestyle=":", linewidth=1)
     plt.title(f"Event Study: {outcome}")
     plt.xlabel("Event time (quarters)")
     plt.ylabel("Coefficient")
+    plt.legend()
     plt.tight_layout()
     plt.savefig(fig_path, dpi=150)
     plt.close()

@@ -16,6 +16,13 @@ uv venv
 uv pip install -e .
 ```
 
+For development (tests + linting):
+
+```powershell
+uv venv
+uv pip install -e ".[dev]"
+```
+
 ## Configure
 
 1. Copy the environment template:
@@ -24,7 +31,7 @@ uv pip install -e .
 copy .env.example .env
 ```
 
-2. Update `SEC_USER_AGENT` in `.env` or directly in `config/config.yaml`:
+2. Update `SEC_USER_AGENT` in `.env` or directly in `config/config.yaml` (environment variables override YAML):
 
 ```yaml
 sec:
