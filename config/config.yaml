@@ -1,0 +1,70 @@
+project:
+  data_dir: "data"
+  outputs_dir: "outputs"
+  duckdb_path: "data/derived/pipeline.duckdb"
+
+usaspending:
+  base_url: "https://api.usaspending.gov"
+  endpoint: "/api/v2/search/spending_by_award/"
+  filters:
+    award_type_codes: ["A", "B", "C", "D"]
+    time_period:
+      - start_date: "2016-01-01"
+        end_date: "2025-12-31"
+  fields:
+    - "Award ID"
+    - "Recipient Name"
+    - "Award Amount"
+    - "Start Date"
+    - "End Date"
+    - "Awarding Agency"
+    - "Funding Agency"
+    - "Award Type"
+    - "NAICS"
+    - "Award Description"
+    - "Recipient DUNS Number"
+  page_size: 100
+  max_pages: 99999
+  subawards: false
+
+sec:
+  base_zip_url: "https://www.sec.gov/files/dera/data/financial-statement-data-sets/{year}q{q}.zip"
+  start_year: 2014
+  end_year: 2025
+  user_agent: "YOUR NAME your.email@domain.com"
+  request_sleep_seconds: 0.15
+  forms_allowlist: ["10-Q", "10-K", "20-F", "40-F"]
+  keep_dimensions: false
+  tags_to_extract: "config/sec_tag_map.yaml"
+
+matching:
+  recipient_to_cik:
+    fuzzy_threshold: 92
+    manual_override_csv: "data/manual/recipient_cik_overrides.csv"
+
+panel:
+  event_window_quarters:
+    pre: 8
+    post: 12
+  baseline_quarters:
+    start: -4
+    end: -1
+  treatment_definition:
+    use_first_award_per_firm: true
+    min_award_amount: 1000000
+
+analysis:
+  outcomes:
+    - gross_margin
+    - markup_rev_cogs
+    - capex_intensity
+    - ppe_growth
+  cluster: "firm"
+  add_controls: true
+  control_vars:
+    - log_assets
+    - log_sales
+  heterogeneity:
+    enable_hhi: true
+    hhi_source: "census_2017"
+    high_hhi_cut: 2500
