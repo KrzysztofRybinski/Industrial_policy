@@ -1,0 +1,47 @@
+[project]
+name = "industrial_policy"
+version = "0.1.0"
+description = "Industrial policy subsidy to markup pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "OpenAI Codex"}]
+dependencies = [
+  "duckdb",
+  "linearmodels",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "pyyaml",
+  "rapidfuzz",
+  "requests",
+  "scikit-learn",
+  "statsmodels",
+  "tenacity",
+  "tqdm",
+  "typer[all]",
+]
+
+[project.scripts]
+industrial-policy = "industrial_policy.cli:app"
+
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

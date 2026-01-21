@@ -1,0 +1,17 @@
+revenue:
+  - Revenues
+  - SalesRevenueNet
+cogs:
+  - CostOfRevenue
+  - CostOfGoodsSold
+gross_profit:
+  - GrossProfit
+operating_income:
+  - OperatingIncomeLoss
+assets:
+  - Assets
+ppe_net:
+  - PropertyPlantAndEquipmentNet
+capex_cash:
+  - PaymentsToAcquirePropertyPlantAndEquipment
+  - PaymentsToAcquireProductiveAssets
