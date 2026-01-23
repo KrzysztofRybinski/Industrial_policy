@@ -43,18 +43,21 @@ This is required to comply with SEC fair-access rules.
 ## Run the full pipeline
 
 ```powershell
-uv run industrial-policy all --config config/config.yaml
+uv run industrial-policy all --config-path config/config.yaml
 ```
+
+The CLI also accepts `--config` and `-c` as aliases for `--config-path`.
 
 Or run steps independently:
 
 ```powershell
-uv run industrial-policy ingest usaspending --config config/config.yaml
-uv run industrial-policy ingest sec --config config/config.yaml
-uv run industrial-policy match recipients --config config/config.yaml
-uv run industrial-policy build panel --config config/config.yaml
-uv run industrial-policy match controls --config config/config.yaml
-uv run industrial-policy estimate --config config/config.yaml
+uv run industrial-policy doctor --config-path config/config.yaml
+uv run industrial-policy ingest usaspending --config-path config/config.yaml
+uv run industrial-policy ingest sec --config-path config/config.yaml
+uv run industrial-policy match recipients --config-path config/config.yaml
+uv run industrial-policy build panel --config-path config/config.yaml
+uv run industrial-policy match controls --config-path config/config.yaml
+uv run industrial-policy estimate --config-path config/config.yaml
 ```
 
 A convenience script is also provided:

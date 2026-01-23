@@ -27,19 +27,37 @@ def compute_financial_features(df: pd.DataFrame, winsor_limits: Tuple[float, flo
         DataFrame with new features.
     """
     df = df.copy()
-    df["gross_margin"] = (df["revenue"] - df["cogs"]) / df["revenue"]
-    df["markup_rev_cogs"] = df["revenue"] / df["cogs"]
+    required_cols = ["revenue", "cogs", "capex_cash", "ppe_net", "assets"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+    if "sga" not in df.columns:
+        df["sga"] = np.nan
+    if "rd" not in df.columns:
+        df["rd"] = np.nan
+
+    df["gross_margin"] = np.where(
+        df["revenue"] > 0, (df["revenue"] - df["cogs"]) / df["revenue"], np.nan
+    )
+    df["markup_rev_cogs"] = np.where(
+        df["cogs"] > 0, df["revenue"] / df["cogs"], np.nan
+    )
     df["capex"] = df["capex_cash"].abs()
-    df["capex_intensity"] = df["capex"] / df["revenue"]
-    df["sga"] = df["sga"] if "sga" in df.columns else np.nan
-    df["rd"] = df["rd"] if "rd" in df.columns else np.nan
-    df["sga_intensity"] = df["sga"] / df["revenue"]
-    df["rd_intensity"] = df["rd"] / df["revenue"]
+    df["capex_intensity"] = np.where(
+        df["revenue"] > 0, df["capex"] / df["revenue"], np.nan
+    )
+    df["sga_intensity"] = np.where(
+        df["revenue"] > 0, df["sga"] / df["revenue"], np.nan
+    )
+    df["rd_intensity"] = np.where(
+        df["revenue"] > 0, df["rd"] / df["revenue"], np.nan
+    )
 
     df = df.sort_values(["cik", "period_end_date"]).copy()
-    df["ppe_growth"] = np.log(df["ppe_net"]) - np.log(df.groupby("cik")["ppe_net"].shift(1))
-    df["log_sales"] = np.log(df["revenue"])
-    df["log_assets"] = np.log(df["assets"])
+    log_ppe = np.where(df["ppe_net"] > 0, np.log(df["ppe_net"]), np.nan)
+    df["ppe_growth"] = log_ppe - pd.Series(log_ppe).groupby(df["cik"]).shift(1)
+    df["log_sales"] = np.where(df["revenue"] > 0, np.log(df["revenue"]), np.nan)
+    df["log_assets"] = np.where(df["assets"] > 0, np.log(df["assets"]), np.nan)
 
     ratio_cols: Iterable[str] = [
         "gross_margin",
@@ -52,4 +70,5 @@ def compute_financial_features(df: pd.DataFrame, winsor_limits: Tuple[float, flo
     for col in ratio_cols:
         df[f"{col}_winsor"] = winsorize(df[col], *winsor_limits)
 
+    df = df.replace([np.inf, -np.inf], np.nan)
     return df

@@ -7,6 +7,7 @@ from typing import Any, Dict, Tuple
 import pandas as pd
 
 from industrial_policy.log import get_logger
+from industrial_policy.utils.sec import normalize_cik
 
 
 def build_event_panel(
@@ -29,8 +30,10 @@ def build_event_panel(
     data_dir.mkdir(parents=True, exist_ok=True)
 
     treated_awards = awards.copy()
+    treated_awards["cik"] = treated_awards["cik"].map(normalize_cik)
     treated_awards = treated_awards[treated_awards["treated"] == 1]
     treated_awards = treated_awards.dropna(subset=["cik"])
+    treated_awards["award_date"] = pd.to_datetime(treated_awards["award_date"], errors="coerce")
 
     if config["panel"]["treatment_definition"]["use_first_award_per_firm"]:
         treated_awards = (
@@ -38,6 +41,7 @@ def build_event_panel(
         )
 
     sec_panel = sec_panel.copy()
+    sec_panel["cik"] = sec_panel["cik"].map(normalize_cik)
     sec_panel["period_end_date"] = pd.to_datetime(sec_panel["period_end_date"], errors="coerce")
 
     event_rows = []
@@ -67,6 +71,12 @@ def build_event_panel(
             (event_panel["event_time_q"] >= -window["pre"]) &
             (event_panel["event_time_q"] <= window["post"])
         ]
+    if event_panel.empty:
+        logger.error(
+            "Treated event panel is empty after matching awards to SEC panel. "
+            "Check CIK normalization and award dates."
+        )
+        raise ValueError("No treated event panel rows produced.")
 
     treated_ciks = treated_awards["cik"].unique().tolist()
     control_pool = sec_panel[~sec_panel["cik"].isin(treated_ciks)].copy()

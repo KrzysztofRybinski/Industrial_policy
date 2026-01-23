@@ -40,7 +40,14 @@ def nearest_neighbor_match(propensity: pd.DataFrame, config: Dict[str, Any], k: 
         if candidates.empty:
             continue
         candidates["distance"] = (candidates["propensity_score"] - treat_row["propensity_score"]).abs()
+        candidates["year_distance"] = (candidates["event_year"] - year).abs()
         candidates = candidates[candidates["distance"] <= caliper]
+        if candidates.empty:
+            continue
+        candidates = (
+            candidates.sort_values(["year_distance", "distance", "cik"])
+            .drop_duplicates(subset=["cik"], keep="first")
+        )
         candidates = candidates.nsmallest(k, "distance")
         if candidates.empty:
             continue
@@ -58,6 +65,10 @@ def nearest_neighbor_match(propensity: pd.DataFrame, config: Dict[str, Any], k: 
             )
 
     matches_df = pd.DataFrame(matches)
+    if not matches_df.empty:
+        matches_df = matches_df.drop_duplicates(subset=["treated_cik", "control_cik"])
+        weight_sums = matches_df.groupby("treated_cik")["weight"].transform("sum")
+        matches_df["weight"] = matches_df["weight"] / weight_sums
     output_path = Path(config["project"]["data_dir"]) / "derived" / "matches.parquet"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     matches_df.to_parquet(output_path, index=False)
