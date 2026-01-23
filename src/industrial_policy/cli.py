@@ -44,36 +44,52 @@ def _configure(config_path: Path) -> dict:
     return config
 
 
-ingest_config_option = typer.Option("config/config.yaml", help="Path to config YAML")
+config_option = typer.Option(
+    "config/config.yaml",
+    "--config-path",
+    "--config",
+    "-c",
+    envvar="INDPOLICY_CONFIG",
+    help="Path to config YAML",
+)
+
+
+def _require_file(path: Path, command: str) -> None:
+    if not path.exists():
+        raise typer.BadParameter(f"Missing required file: {path}. Run: {command}")
 
 
 @ingest_app.command("usaspending")
-def ingest_usaspending(config_path: Path = ingest_config_option) -> None:
+def ingest_usaspending(config_path: Path = config_option) -> None:
     """Fetch USAspending awards."""
     config = _configure(config_path)
     fetch_usaspending_awards(config)
 
 
 @ingest_app.command("sec")
-def ingest_sec(config_path: Path = ingest_config_option) -> None:
+def ingest_sec(config_path: Path = config_option) -> None:
     """Fetch SEC FSDS data."""
     config = _configure(config_path)
     fetch_sec_fsds(config)
 
 
 @ingest_app.command("eu")
-def ingest_eu(config_path: Path = ingest_config_option) -> None:
+def ingest_eu(config_path: Path = config_option) -> None:
     """Load optional EU State Aid data."""
     config = _configure(config_path)
     load_eu_state_aid(config["project"]["data_dir"])
 
 
 @match_app.command("recipients")
-def match_recipients_cmd(config_path: Path = ingest_config_option) -> None:
+def match_recipients_cmd(config_path: Path = config_option) -> None:
     """Match USAspending recipients to SEC CIKs."""
     config = _configure(config_path)
     data_dir = Path(config["project"]["data_dir"]) / "derived"
     awards_path = data_dir / "usaspending_awards.parquet"
+    _require_file(
+        awards_path,
+        f"uv run industrial-policy ingest usaspending --config-path {config_path}",
+    )
     awards = pd.read_parquet(awards_path)
     awards = prepare_awards(awards, config)
     lookup = fetch_company_lookup(config["project"]["data_dir"], config["sec"]["user_agent"])
@@ -81,37 +97,72 @@ def match_recipients_cmd(config_path: Path = ingest_config_option) -> None:
 
 
 @build_app.command("panel")
-def build_panel_cmd(config_path: Path = ingest_config_option) -> None:
+def build_panel_cmd(config_path: Path = config_option) -> None:
     """Build event-time panel."""
     config = _configure(config_path)
     data_dir = Path(config["project"]["data_dir"]) / "derived"
-    awards = pd.read_parquet(data_dir / "awards_with_cik.parquet")
-    sec_panel = pd.read_parquet(data_dir / "sec_firm_period_base.parquet")
+    awards_path = data_dir / "awards_with_cik.parquet"
+    sec_path = data_dir / "sec_firm_period_base.parquet"
+    _require_file(
+        awards_path,
+        f"uv run industrial-policy match recipients --config-path {config_path}",
+    )
+    _require_file(
+        sec_path,
+        f"uv run industrial-policy ingest sec --config-path {config_path}",
+    )
+    awards = pd.read_parquet(awards_path)
+    sec_panel = pd.read_parquet(sec_path)
     sec_features = compute_financial_features(sec_panel)
     sec_features.to_parquet(data_dir / "sec_firm_period_features.parquet", index=False)
     build_event_panel(awards, sec_features, config)
 
 
 @match_app.command("controls")
-def match_controls_cmd(config_path: Path = ingest_config_option) -> None:
+def match_controls_cmd(config_path: Path = config_option) -> None:
     """Match treated firms with control firms."""
     config = _configure(config_path)
     data_dir = Path(config["project"]["data_dir"]) / "derived"
-    treated_panel = pd.read_parquet(data_dir / "event_panel_treated.parquet")
-    control_pool = pd.read_parquet(data_dir / "panel_pool_controls.parquet")
+    treated_path = data_dir / "event_panel_treated.parquet"
+    control_path = data_dir / "panel_pool_controls.parquet"
+    _require_file(
+        treated_path,
+        f"uv run industrial-policy build panel --config-path {config_path}",
+    )
+    _require_file(
+        control_path,
+        f"uv run industrial-policy build panel --config-path {config_path}",
+    )
+    treated_panel = pd.read_parquet(treated_path)
+    control_pool = pd.read_parquet(control_path)
     propensity = build_propensity_scores(treated_panel, control_pool, config)
     propensity.to_parquet(data_dir / "propensity_scores.parquet", index=False)
     nearest_neighbor_match(propensity, config)
 
 
 @app.command("estimate")
-def estimate_cmd(config_path: Path = ingest_config_option) -> None:
+def estimate_cmd(config_path: Path = config_option) -> None:
     """Estimate event-study DID and write outputs."""
     config = _configure(config_path)
     data_dir = Path(config["project"]["data_dir"]) / "derived"
-    treated_panel = pd.read_parquet(data_dir / "event_panel_treated.parquet")
-    control_pool = pd.read_parquet(data_dir / "panel_pool_controls.parquet")
-    matches = pd.read_parquet(data_dir / "matches.parquet")
+    treated_path = data_dir / "event_panel_treated.parquet"
+    control_path = data_dir / "panel_pool_controls.parquet"
+    matches_path = data_dir / "matches.parquet"
+    _require_file(
+        treated_path,
+        f"uv run industrial-policy build panel --config-path {config_path}",
+    )
+    _require_file(
+        control_path,
+        f"uv run industrial-policy build panel --config-path {config_path}",
+    )
+    _require_file(
+        matches_path,
+        f"uv run industrial-policy match controls --config-path {config_path}",
+    )
+    treated_panel = pd.read_parquet(treated_path)
+    control_pool = pd.read_parquet(control_path)
+    matches = pd.read_parquet(matches_path)
 
     results = run_event_studies(treated_panel, control_pool, matches, config)
     save_event_study_outputs(results, config["project"]["outputs_dir"])
@@ -124,7 +175,7 @@ def estimate_cmd(config_path: Path = ingest_config_option) -> None:
 
 
 @app.command("all")
-def run_all(config_path: Path = ingest_config_option) -> None:
+def run_all(config_path: Path = config_option) -> None:
     """Run the full pipeline."""
     ingest_usaspending(config_path)
     ingest_sec(config_path)
@@ -133,6 +184,51 @@ def run_all(config_path: Path = ingest_config_option) -> None:
     match_controls_cmd(config_path)
     estimate_cmd(config_path)
 
+
+@app.command("doctor")
+def doctor_cmd(config_path: Path = config_option) -> None:
+    """Run configuration and data checks."""
+    config = _configure(config_path)
+    data_dir = Path(config["project"]["data_dir"])
+    outputs_dir = Path(config["project"]["outputs_dir"])
+    typer.echo(f"Config path: {Path(config_path).resolve()}")
+    typer.echo(f"Data dir: {data_dir.resolve()}")
+    typer.echo(f"Outputs dir: {outputs_dir.resolve()}")
+
+    sec_user_agent = config.get("sec", {}).get("user_agent")
+    if sec_user_agent:
+        typer.echo("SEC_USER_AGENT: configured")
+    else:
+        typer.echo("SEC_USER_AGENT: missing (set in .env or config/config.yaml)")
+
+    checks = [
+        (
+            data_dir / "derived" / "usaspending_awards.parquet",
+            f"uv run industrial-policy ingest usaspending --config-path {config_path}",
+        ),
+        (
+            data_dir / "derived" / "sec_firm_period_base.parquet",
+            f"uv run industrial-policy ingest sec --config-path {config_path}",
+        ),
+        (
+            data_dir / "derived" / "awards_with_cik.parquet",
+            f"uv run industrial-policy match recipients --config-path {config_path}",
+        ),
+        (
+            data_dir / "derived" / "event_panel_treated.parquet",
+            f"uv run industrial-policy build panel --config-path {config_path}",
+        ),
+        (
+            data_dir / "derived" / "matches.parquet",
+            f"uv run industrial-policy match controls --config-path {config_path}",
+        ),
+    ]
+    typer.echo("\nPipeline checkpoints:")
+    for path, command in checks:
+        status = "OK" if path.exists() else "MISSING"
+        typer.echo(f"- {status}: {path}")
+        if not path.exists():
+            typer.echo(f"  -> Run: {command}")
 
 if __name__ == "__main__":
     app()

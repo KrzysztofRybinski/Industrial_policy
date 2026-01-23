@@ -29,6 +29,11 @@ def build_propensity_scores(
     baseline = config["panel"]["baseline_quarters"]
     covariates = config["analysis"]["control_vars"]
 
+    treated_panel = treated_panel.copy()
+    treated_panel["event_date"] = pd.to_datetime(treated_panel["event_date"], errors="coerce")
+    control_pool = control_pool.copy()
+    control_pool["period_end_date"] = pd.to_datetime(control_pool["period_end_date"], errors="coerce")
+
     treated_base = treated_panel[
         (treated_panel["event_time_q"] >= baseline["start"]) &
         (treated_panel["event_time_q"] <= baseline["end"])
@@ -51,6 +56,9 @@ def build_propensity_scores(
         logger.warning("No data available for propensity score estimation")
         combined["propensity_score"] = np.nan
         return combined
+    if combined["treated"].nunique() < 2:
+        logger.warning("Propensity score estimation skipped: only one class present.")
+        return combined.iloc[0:0].assign(propensity_score=np.nan)
 
     model = LogisticRegression(max_iter=1000)
     X = combined[covariates]

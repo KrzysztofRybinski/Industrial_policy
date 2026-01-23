@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 
 from industrial_policy.log import get_logger
+from industrial_policy.utils.sec import normalize_cik
 from industrial_policy.utils.textnorm import normalize_name
 
 SEC_TICKER_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -42,7 +43,7 @@ def fetch_company_lookup(data_dir: str, user_agent: Optional[str] = None) -> pd.
     for _, entry in data.items():
         rows.append(
             {
-                "cik": str(entry.get("cik_str")).zfill(10),
+                "cik": normalize_cik(entry.get("cik_str")),
                 "ticker": entry.get("ticker"),
                 "company_name": entry.get("title"),
             }

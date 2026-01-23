@@ -8,6 +8,7 @@ import pandas as pd
 from rapidfuzz import process
 
 from industrial_policy.log import get_logger
+from industrial_policy.utils.sec import normalize_cik
 from industrial_policy.utils.textnorm import normalize_name
 
 
@@ -35,11 +36,16 @@ def match_recipients(
 
     company_lookup = company_lookup.copy()
     company_lookup["company_name_norm"] = company_lookup["company_name_norm"].fillna("")
+    company_lookup["cik"] = company_lookup["cik"].map(normalize_cik)
     choices = company_lookup["company_name_norm"].tolist()
+
+    awards = awards.copy()
+    awards["recipient_name_norm"] = awards["recipient_name_norm"].fillna("").map(normalize_name)
+    unique_recipients = awards[["recipient_name", "recipient_name_norm"]].drop_duplicates()
 
     matches = []
     candidates = []
-    for _, row in awards.iterrows():
+    for _, row in unique_recipients.iterrows():
         name = row.get("recipient_name_norm") or normalize_name(row.get("recipient_name", ""))
         if not name:
             continue
@@ -68,10 +74,17 @@ def match_recipients(
 
     matches_df = pd.DataFrame(matches)
     candidates_df = pd.DataFrame(candidates)
+    if not matches_df.empty:
+        matches_df["cik"] = matches_df["cik"].map(normalize_cik)
+        matches_df = matches_df.sort_values(
+            ["score", "matched_name", "cik"],
+            ascending=[False, True, True],
+        ).drop_duplicates(subset=["recipient_name_norm"], keep="first")
 
     if overrides_path.exists():
         overrides = pd.read_csv(overrides_path)
         overrides["recipient_name_norm"] = overrides["recipient_name"].fillna("").map(normalize_name)
+        overrides["cik"] = overrides["cik"].map(normalize_cik)
         matches_df = matches_df.merge(
             overrides[["recipient_name_norm", "cik"]],
             on="recipient_name_norm",
@@ -87,6 +100,11 @@ def match_recipients(
     candidates_df.to_parquet(candidates_path, index=False)
 
     awards_with_matches = awards.merge(matches_df, on="recipient_name_norm", how="left")
+    if len(awards_with_matches) != len(awards):
+        raise ValueError(
+            "Recipient matching produced a different number of rows than awards; "
+            "check for duplicate recipient_name_norm entries."
+        )
     linked_path = data_dir / "awards_with_cik.parquet"
     awards_with_matches.to_parquet(linked_path, index=False)
     logger.info("Saved recipient matches to %s", matches_path)
