@@ -77,6 +77,13 @@ def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
         }
         logger.info("Fetching USAspending page %s", page)
         response = _post_with_retry(session, url, payload, request_timeout)
+        if response.status_code == 422:
+            stop_reason = "api_page_limit"
+            logger.warning(
+                "USAspending returned 422 for page %s; stopping ingestion",
+                page,
+            )
+            break
         response.raise_for_status()
         data = response.json()
         results = data.get("results", [])
