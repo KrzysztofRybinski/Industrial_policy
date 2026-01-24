@@ -36,28 +36,33 @@ def compute_financial_features(df: pd.DataFrame, winsor_limits: Tuple[float, flo
     if "rd" not in df.columns:
         df["rd"] = np.nan
 
+    revenue_positive = df["revenue"].gt(0).fillna(False)
+    cogs_positive = df["cogs"].gt(0).fillna(False)
+    ppe_positive = df["ppe_net"].gt(0).fillna(False)
+    assets_positive = df["assets"].gt(0).fillna(False)
+
     df["gross_margin"] = np.where(
-        df["revenue"] > 0, (df["revenue"] - df["cogs"]) / df["revenue"], np.nan
+        revenue_positive, (df["revenue"] - df["cogs"]) / df["revenue"], np.nan
     )
     df["markup_rev_cogs"] = np.where(
-        df["cogs"] > 0, df["revenue"] / df["cogs"], np.nan
+        cogs_positive, df["revenue"] / df["cogs"], np.nan
     )
     df["capex"] = df["capex_cash"].abs()
     df["capex_intensity"] = np.where(
-        df["revenue"] > 0, df["capex"] / df["revenue"], np.nan
+        revenue_positive, df["capex"] / df["revenue"], np.nan
     )
     df["sga_intensity"] = np.where(
-        df["revenue"] > 0, df["sga"] / df["revenue"], np.nan
+        revenue_positive, df["sga"] / df["revenue"], np.nan
     )
     df["rd_intensity"] = np.where(
-        df["revenue"] > 0, df["rd"] / df["revenue"], np.nan
+        revenue_positive, df["rd"] / df["revenue"], np.nan
     )
 
     df = df.sort_values(["cik", "period_end_date"]).copy()
-    log_ppe = np.where(df["ppe_net"] > 0, np.log(df["ppe_net"]), np.nan)
+    log_ppe = np.where(ppe_positive, np.log(df["ppe_net"]), np.nan)
     df["ppe_growth"] = log_ppe - pd.Series(log_ppe).groupby(df["cik"]).shift(1)
-    df["log_sales"] = np.where(df["revenue"] > 0, np.log(df["revenue"]), np.nan)
-    df["log_assets"] = np.where(df["assets"] > 0, np.log(df["assets"]), np.nan)
+    df["log_sales"] = np.where(revenue_positive, np.log(df["revenue"]), np.nan)
+    df["log_assets"] = np.where(assets_positive, np.log(df["assets"]), np.nan)
 
     ratio_cols: Iterable[str] = [
         "gross_margin",
