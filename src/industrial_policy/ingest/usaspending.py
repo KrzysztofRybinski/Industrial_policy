@@ -39,6 +39,36 @@ def _post_with_retry(
     return session.post(url, json=payload, timeout=timeout)
 
 
+def _is_page_limit_422(response: requests.Response) -> bool:
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    detail = payload.get("detail") or payload.get("errors") or payload.get("message")
+    if isinstance(detail, str):
+        detail_text = detail.lower()
+        return "page" in detail_text and (
+            "limit" in detail_text
+            or "max" in detail_text
+            or "out of range" in detail_text
+            or "less than" in detail_text
+        )
+    if isinstance(detail, list):
+        for item in detail:
+            if isinstance(item, dict):
+                loc = item.get("loc", [])
+                if isinstance(loc, (list, tuple)) and any(
+                    str(part).lower() == "page" for part in loc
+                ):
+                    return True
+                msg = str(item.get("msg", "")).lower()
+                if "page" in msg and (
+                    "limit" in msg or "max" in msg or "out of range" in msg
+                ):
+                    return True
+    return False
+
+
 def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
     """Fetch awards from the USAspending API and save to parquet.
 
@@ -78,12 +108,19 @@ def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
         logger.info("Fetching USAspending page %s", page)
         response = _post_with_retry(session, url, payload, request_timeout)
         if response.status_code == 422:
-            stop_reason = "api_page_limit"
-            logger.warning(
-                "USAspending returned 422 for page %s; stopping ingestion",
+            if _is_page_limit_422(response):
+                stop_reason = "api_page_limit"
+                logger.warning(
+                    "USAspending returned page-limit 422 for page %s; stopping ingestion",
+                    page,
+                )
+                break
+            logger.error(
+                "USAspending returned 422 for page %s: %s",
                 page,
+                response.text,
             )
-            break
+            response.raise_for_status()
         response.raise_for_status()
         data = response.json()
         results = data.get("results", [])
