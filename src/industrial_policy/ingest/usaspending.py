@@ -36,7 +36,10 @@ def _post_with_retry(
     payload: Dict[str, Any],
     timeout: int,
 ) -> requests.Response:
-    return session.post(url, json=payload, timeout=timeout)
+    response = session.post(url, json=payload, timeout=timeout)
+    if 500 <= response.status_code < 600:
+        response.raise_for_status()
+    return response
 
 
 def _is_page_limit_422(response: requests.Response) -> bool:
@@ -106,7 +109,18 @@ def fetch_usaspending_awards(config: Dict[str, Any]) -> pd.DataFrame:
             "subawards": api_config.get("subawards", False),
         }
         logger.info("Fetching USAspending page %s", page)
-        response = _post_with_retry(session, url, payload, request_timeout)
+        try:
+            response = _post_with_retry(session, url, payload, request_timeout)
+        except requests.RequestException as exc:
+            stop_reason = "request_error"
+            status = getattr(exc.response, "status_code", None)
+            logger.error(
+                "USAspending request failed on page %s (status=%s): %s",
+                page,
+                status,
+                exc,
+            )
+            break
         if response.status_code == 422:
             if _is_page_limit_422(response):
                 stop_reason = "api_page_limit"
