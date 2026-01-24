@@ -79,8 +79,8 @@ def _load_quarter_df(
 
 def compute_quarterly_from_fsds(df: pd.DataFrame, flow_tags: set[str]) -> pd.DataFrame:
     df = df.copy()
-    df["metric_value"] = df["value"]
-    df["quarterly_value"] = pd.NA
+    df["metric_value"] = df["value"].astype("Float64")
+    df["quarterly_value"] = pd.Series(pd.NA, index=df.index, dtype="Float64")
 
     flow_mask = df["tag"].isin(flow_tags)
     if not flow_mask.any():
@@ -137,7 +137,7 @@ def build_sec_firm_period_panel(df: pd.DataFrame, tag_map: Dict[str, List[str]])
     for metric, tags in tag_map.items():
         tag_subset = df[df["tag"].isin(tags)].copy()
         if tag_subset.empty:
-            panel[metric] = pd.NA
+            panel[metric] = pd.Series(pd.NA, index=panel.index, dtype="Float64")
             continue
         tag_subset = tag_subset.sort_values(["priority", "accepted_datetime"])
         tag_subset = tag_subset.dropna(subset=["metric_value"])
@@ -149,6 +149,7 @@ def build_sec_firm_period_panel(df: pd.DataFrame, tag_map: Dict[str, List[str]])
             on=["cik", "period_end_date"],
             how="left",
         )
+        panel[metric] = panel[metric].astype("Float64")
 
     if panel.duplicated(subset=["cik", "period_end_date"]).any():
         raise ValueError("SEC firm-period panel contains duplicate cik-period rows.")
