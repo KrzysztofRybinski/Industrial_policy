@@ -173,6 +173,10 @@ def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
     raw_dir.mkdir(parents=True, exist_ok=True)
     derived_dir = data_dir / "derived"
     derived_dir.mkdir(parents=True, exist_ok=True)
+    output_path = derived_dir / "sec_firm_period_base.parquet"
+    if output_path.exists():
+        logger.info("SEC panel already exists at %s; skipping download.", output_path)
+        return pd.read_parquet(output_path)
 
     sec_config = config["sec"]
     tag_map_path = Path(sec_config["tags_to_extract"])
@@ -234,7 +238,6 @@ def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
 
     panel = build_sec_firm_period_panel(df, tag_map)
 
-    output_path = derived_dir / "sec_firm_period_base.parquet"
     panel.to_parquet(output_path, index=False)
     logger.info("Saved SEC panel to %s", output_path)
     return panel

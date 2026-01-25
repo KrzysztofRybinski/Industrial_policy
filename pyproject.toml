@@ -8,6 +8,7 @@ license = {text = "MIT"}
 authors = [{name = "Krzysztof Rybinski"}]
 dependencies = [
   "duckdb",
+  "jinja2",
   "linearmodels",
   "matplotlib",
   "numpy",
