@@ -89,6 +89,7 @@ def estimate_event_study(
     df = stacked.dropna(subset=[outcome]).copy()
     if df.empty:
         return pd.DataFrame(), {}
+    df[outcome] = pd.to_numeric(df[outcome], errors="coerce")
 
     df["event_time_q"] = df["event_time_q"].astype(int)
     event_dummies = pd.get_dummies(df["event_time_q"], prefix="event", drop_first=False)
@@ -101,8 +102,13 @@ def estimate_event_study(
 
     X = pd.concat([event_dummies, df[control_vars], firm_dummies, time_dummies], axis=1)
     X = sm.add_constant(X)
+    X = X.apply(pd.to_numeric, errors="coerce")
+    valid_rows = X.notna().all(axis=1) & df[outcome].notna()
+    df = df.loc[valid_rows].copy()
+    X = X.loc[valid_rows].astype(float)
+    weights = pd.to_numeric(df.get("weight", 1.0), errors="coerce").fillna(1.0)
 
-    model = sm.WLS(df[outcome], X, weights=df.get("weight", 1.0))
+    model = sm.WLS(df[outcome], X, weights=weights)
     results = model.fit(cov_type="cluster", cov_kwds={"groups": df["cik"]})
 
     coeffs = []
