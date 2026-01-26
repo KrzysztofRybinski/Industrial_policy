@@ -1,7 +1,7 @@
 project:
-  data_dir: "data"
-  outputs_dir: "outputs"
-  duckdb_path: "data/derived/pipeline.duckdb"
+  data_dir: "data_smoke"
+  outputs_dir: "outputs_smoke"
+  duckdb_path: "data_smoke/derived/pipeline.duckdb"
 
 usaspending:
   base_url: "https://api.usaspending.gov"
@@ -10,7 +10,7 @@ usaspending:
     award_type_codes: ["A", "B", "C", "D"]
     time_period:
       - start_date: "2016-01-01"
-        end_date: "2025-12-31"
+        end_date: "2016-01-03"
   fields:
     - "Award ID"
     - "Recipient Name"
@@ -38,7 +38,7 @@ usaspending:
     backoff_seconds: 1.0
   chunking:
     enable: true
-    initial_granularity: "quarter"
+    initial_granularity: "week"
     min_granularity_days: 1
     adaptive_split_on_422: true
   cache_mode: "parquet_chunks"
@@ -58,7 +58,7 @@ sec:
 matching:
   recipient_to_cik:
     fuzzy_threshold: 92
-    manual_override_csv: "data/manual/recipient_cik_overrides.csv"
+    manual_override_csv: "data_smoke/manual/recipient_cik_overrides.csv"
 
 panel:
   event_window_quarters:
@@ -85,7 +85,7 @@ analysis:
     - log_assets
     - log_sales
   heterogeneity:
-    enable_hhi: true
+    enable_hhi: false
     hhi_source: "census_2017"
     high_hhi_cut: 2500
   robustness:
@@ -96,7 +96,7 @@ analysis:
       - {start: "2020-04-01", end: "2021-12-31"}
 
 hhi:
-  enable: true
-  census_file: "data/manual/census_hhi.csv"
+  enable: false
+  census_file: "data_smoke/manual/census_hhi.csv"
   naics_column: "naics"
   hhi_column: "hhi"

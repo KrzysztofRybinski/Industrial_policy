@@ -8,3 +8,8 @@ def test_normalize_name_removes_suffixes() -> None:
 
 def test_normalize_name_uppercase_and_punctuation() -> None:
     assert normalize_name("Foo-Bar LLC") == "FOO BAR"
+
+
+def test_normalize_name_handles_non_strings() -> None:
+    assert normalize_name(None) == ""
+    assert normalize_name(float("nan")) == ""

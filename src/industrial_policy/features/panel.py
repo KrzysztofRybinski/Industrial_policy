@@ -112,10 +112,8 @@ def build_event_panel(
                 event_quarter - window["pre"], event_quarter + window["post"]
             )
         ]
-        stack_panel["event_time_q"] = (
-            stack_panel["calendar_quarter"] - event_quarter
-        ).astype(int)
-        eligible = stack_panel["first_award_date"].isna() | (
+        stack_panel["event_time_q"] = stack_panel["calendar_quarter"].astype(int) - event_quarter.ordinal
+        eligible = (stack_panel["cik"] == treated_cik) | stack_panel["first_award_date"].isna() | (
             stack_panel["first_award_date"] >= event_date
         )
         stack_panel = stack_panel[eligible].copy()

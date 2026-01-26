@@ -43,12 +43,27 @@ def build_propensity_scores(
     treated_base["event_year"] = treated_base["event_date"].dt.year
 
     def _trend_stats(df: pd.DataFrame, value_col: str) -> pd.Series:
-        if df[value_col].notna().sum() < 2:
-            return pd.Series({"mean": df[value_col].mean(), "slope": np.nan})
-        x = df["event_time_q"].to_numpy()
-        y = df[value_col].to_numpy()
-        slope = np.polyfit(x, y, 1)[0]
-        return pd.Series({"mean": np.nanmean(y), "slope": slope})
+        series = pd.to_numeric(df[value_col], errors="coerce")
+        mean = series.mean()
+        x = pd.to_numeric(df["event_time_q"], errors="coerce").to_numpy(dtype=float)
+        y = series.to_numpy(dtype=float)
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() < 2:
+            return pd.Series({"mean": mean, "slope": 0.0})
+        slope = np.polyfit(x[mask], y[mask], 1)[0]
+        return pd.Series({"mean": mean, "slope": slope})
+
+    def _control_trend_stats(df: pd.DataFrame, value_col: str) -> pd.Series:
+        df = df.sort_values("period_end_date")
+        series = pd.to_numeric(df[value_col], errors="coerce")
+        mean = series.mean()
+        y = series.to_numpy(dtype=float)
+        x = np.arange(len(y), dtype=float)
+        mask = np.isfinite(y)
+        if mask.sum() < 2:
+            return pd.Series({"mean": mean, "slope": 0.0})
+        slope = np.polyfit(x[mask], y[mask], 1)[0]
+        return pd.Series({"mean": mean, "slope": slope})
 
     treated_stats = {}
     for cov in covariates:
@@ -58,8 +73,9 @@ def build_propensity_scores(
     )
     for cov in trend_covariates:
         trend = treated_base.groupby(["cik", "event_year"]).apply(_trend_stats, value_col=cov)
-        treated_grouped[f"{cov}_baseline_mean"] = trend["mean"].values
-        treated_grouped[f"{cov}_baseline_slope"] = trend["slope"].values
+        trend = trend.reindex(treated_grouped.index)
+        treated_grouped[f"{cov}_baseline_mean"] = trend["mean"]
+        treated_grouped[f"{cov}_baseline_slope"] = trend["slope"]
         covariates.extend([f"{cov}_baseline_mean", f"{cov}_baseline_slope"])
     treated_grouped = treated_grouped.reset_index()
     treated_grouped["treated"] = 1
@@ -78,28 +94,14 @@ def build_propensity_scores(
         {**{col: "mean" for col in covariates if col in control_pool.columns}, "sic": "first"}
     )
     for cov in trend_covariates:
-        control_subset = control_pool[control_pool[cov].notna()].copy()
-        if control_subset.empty:
-            control_grouped[f"{cov}_baseline_mean"] = np.nan
-            control_grouped[f"{cov}_baseline_slope"] = np.nan
-        else:
-            control_subset["quarter_index"] = (
-                control_subset.groupby(["cik", "event_year"]).cumcount().astype(float)
-            )
-            trend = control_subset.groupby(["cik", "event_year"]).apply(
-                lambda df: pd.Series(
-                    {
-                        "mean": df[cov].mean(),
-                        "slope": np.polyfit(
-                            df["quarter_index"].to_numpy(), df[cov].to_numpy(), 1
-                        )[0]
-                        if df[cov].notna().sum() >= 2
-                        else np.nan,
-                    }
-                )
-            )
-            control_grouped[f"{cov}_baseline_mean"] = trend["mean"].values
-            control_grouped[f"{cov}_baseline_slope"] = trend["slope"].values
+        if cov not in control_pool.columns:
+            continue
+        trend = control_pool.groupby(["cik", "event_year"]).apply(
+            _control_trend_stats, value_col=cov
+        )
+        trend = trend.reindex(control_grouped.index)
+        control_grouped[f"{cov}_baseline_mean"] = trend["mean"]
+        control_grouped[f"{cov}_baseline_slope"] = trend["slope"]
     control_grouped = control_grouped.reset_index()
     control_grouped["treated"] = 0
 

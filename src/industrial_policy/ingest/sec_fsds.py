@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -167,6 +168,43 @@ def _sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+_QUARTER_DIR_RE = re.compile(r"^\d{4}q[1-4]$", flags=re.IGNORECASE)
+
+
+def _detect_fsds_layout(raw_dir: Path) -> tuple[Path, Path]:
+    """Detect whether FSDS is stored in the current (zips/extracted) or legacy layout.
+
+    Current layout:
+      - raw/sec_fsds/zips/{year}q{q}.zip
+      - raw/sec_fsds/extracted/{year}q{q}/sub.txt, num.txt, ...
+
+    Legacy layout (already present in this repo):
+      - raw/sec_fsds/{year}q{q}.zip
+      - raw/sec_fsds/{year}q{q}/sub.txt, num.txt, ...
+
+    Returns:
+        (zip_dir, extract_root)
+    """
+    zip_dir_new = raw_dir / "zips"
+    extract_root_new = raw_dir / "extracted"
+
+    new_zips = list(zip_dir_new.glob("*.zip"))
+    new_extracts = [
+        p for p in extract_root_new.iterdir() if p.is_dir() and _QUARTER_DIR_RE.match(p.name)
+    ] if extract_root_new.exists() else []
+
+    legacy_zips = list(raw_dir.glob("*.zip"))
+    legacy_extracts = [
+        p for p in raw_dir.iterdir() if p.is_dir() and _QUARTER_DIR_RE.match(p.name)
+    ]
+
+    zip_dir = zip_dir_new if new_zips else (raw_dir if legacy_zips else zip_dir_new)
+    extract_root = (
+        extract_root_new if new_extracts else (raw_dir if legacy_extracts else extract_root_new)
+    )
+    return zip_dir, extract_root
+
+
 def fetch_sec_fsds(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
     """Download and process SEC FSDS data.
 
@@ -180,11 +218,12 @@ def fetch_sec_fsds(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
     project = config["project"]
     data_dir = Path(project["data_dir"])
     raw_dir = data_dir / "raw" / "sec_fsds"
-    zip_dir = raw_dir / "zips"
-    extract_root = raw_dir / "extracted"
+    zip_dir, extract_root = _detect_fsds_layout(raw_dir)
     manifest_dir = raw_dir / "manifests"
-    zip_dir.mkdir(parents=True, exist_ok=True)
-    extract_root.mkdir(parents=True, exist_ok=True)
+    if zip_dir != raw_dir:
+        zip_dir.mkdir(parents=True, exist_ok=True)
+    if extract_root != raw_dir:
+        extract_root.mkdir(parents=True, exist_ok=True)
     manifest_dir.mkdir(parents=True, exist_ok=True)
     derived_dir = data_dir / "derived"
     derived_dir.mkdir(parents=True, exist_ok=True)
@@ -215,21 +254,39 @@ def fetch_sec_fsds(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
     headers = {"User-Agent": sec_config["user_agent"]}
     quarter_frames: list[pd.DataFrame] = []
 
+    logger.info("SEC FSDS zip_dir=%s extract_root=%s", zip_dir, extract_root)
+
     for year, qtr in _quarters_range(sec_config["start_year"], sec_config["end_year"]):
         url = sec_config["base_zip_url"].format(year=year, q=qtr)
         zip_path = zip_dir / f"{year}q{qtr}.zip"
-        if not zip_path.exists() or force:
-            download_file(url, zip_path, headers=headers, sleep_seconds=sec_config["request_sleep_seconds"])
-        else:
-            logger.info("SEC zip cached for %sQ%s; skipping download.", year, qtr)
-
         extract_dir = extract_root / f"{year}q{qtr}"
-        if not extract_dir.exists() or force:
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(zip_path, "r") as archive:
-                archive.extractall(extract_dir)
+        sub_path = extract_dir / "sub.txt"
+        num_path = extract_dir / "num.txt"
+
+        has_extracted = sub_path.exists() and num_path.exists()
+        if has_extracted and not force:
+            logger.info("SEC extracted cached for %sQ%s; skipping download/extraction.", year, qtr)
         else:
-            logger.info("SEC extraction cached for %sQ%s; skipping extraction.", year, qtr)
+            if not zip_path.exists() or force:
+                download_file(
+                    url,
+                    zip_path,
+                    headers=headers,
+                    sleep_seconds=sec_config["request_sleep_seconds"],
+                )
+            if not zip_path.exists():
+                logger.warning(
+                    "Missing SEC zip and extracted files for %sQ%s; skipping quarter.",
+                    year,
+                    qtr,
+                )
+                continue
+            if not extract_dir.exists() or force:
+                extract_dir.mkdir(parents=True, exist_ok=True)
+                with zipfile.ZipFile(zip_path, "r") as archive:
+                    archive.extractall(extract_dir)
+            else:
+                logger.info("SEC extraction cached for %sQ%s; skipping extraction.", year, qtr)
 
         manifest_path = manifest_dir / f"{year}q{qtr}.json"
         manifest = {
@@ -240,11 +297,15 @@ def fetch_sec_fsds(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
             "extract_dir": str(extract_dir),
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-        sub_path = extract_dir / "sub.txt"
-        num_path = extract_dir / "num.txt"
-        if sub_path.exists() and num_path.exists():
-            quarter_df = _load_quarter_df(conn, sub_path, num_path, forms, tag_list, sec_config.get("keep_dimensions", False))
+        if has_extracted or (sub_path.exists() and num_path.exists()):
+            quarter_df = _load_quarter_df(
+                conn,
+                sub_path,
+                num_path,
+                forms,
+                tag_list,
+                sec_config.get("keep_dimensions", False),
+            )
             if not quarter_df.empty:
                 quarter_frames.append(quarter_df)
 

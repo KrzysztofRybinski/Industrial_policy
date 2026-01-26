@@ -16,7 +16,7 @@ SUFFIXES = [
 ]
 
 
-def normalize_name(name: str) -> str:
+def normalize_name(name: object) -> str:
     """Normalize company names for matching.
 
     Args:
@@ -25,7 +25,7 @@ def normalize_name(name: str) -> str:
     Returns:
         Normalized name.
     """
-    if not name:
+    if not name or not isinstance(name, str):
         return ""
     cleaned = re.sub(r"[^A-Za-z0-9 ]+", " ", name.upper()).strip()
     cleaned = re.sub(r"\s+", " ", cleaned)

@@ -24,6 +24,7 @@ def ensure_dirs(config: Dict[str, Any]) -> Dict[str, Path]:
     raw_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     derived_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "manual").mkdir(parents=True, exist_ok=True)
 
     (data_dir / "raw" / "sec_fsds").mkdir(parents=True, exist_ok=True)
     (data_dir / "raw" / "usaspending").mkdir(parents=True, exist_ok=True)

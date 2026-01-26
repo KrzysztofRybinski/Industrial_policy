@@ -23,7 +23,12 @@ def _match_names(
     matches = []
     candidates = []
     for _, row in names.iterrows():
-        name_norm = row.get(norm_col) or normalize_name(row.get(name_col, ""))
+        norm_value = row.get(norm_col)
+        name_norm = (
+            norm_value
+            if isinstance(norm_value, str) and norm_value
+            else normalize_name(row.get(name_col, ""))
+        )
         if not name_norm:
             continue
         best = process.extract(name_norm, choices, limit=5)
@@ -33,6 +38,7 @@ def _match_names(
                     "name_raw": row.get(name_col),
                     "name_norm": name_norm,
                     "candidate_name": match_name,
+                    "candidate_index": _index,
                     "score": score,
                     "rank": rank,
                     "match_source": source,
@@ -118,6 +124,8 @@ def match_recipients(
 
     matches_df = recipient_matches.copy()
     candidates_df = pd.concat([recipient_candidates, parent_candidates], ignore_index=True)
+    if not candidates_df.empty and "candidate_index" in candidates_df.columns:
+        candidates_df["candidate_cik"] = candidates_df["candidate_index"].map(company_lookup["cik"])
     if not matches_df.empty:
         matches_df = matches_df.sort_values(
             ["score", "matched_name", "name_norm"],
@@ -201,6 +209,27 @@ def match_recipients(
             unmatched_path = Path(config["project"]["outputs_dir"]) / "tables" / "unmatched_large_awards.csv"
             unmatched_path.parent.mkdir(parents=True, exist_ok=True)
             top_unmatched.to_csv(unmatched_path, index=False)
+
+        if not unmatched.empty and not candidates_df.empty:
+            recipient_totals = (
+                unmatched.groupby("recipient_name_norm", as_index=False)
+                .agg(
+                    recipient_name=("recipient_name", "first"),
+                    award_count=("award_amount", "size"),
+                    total_award_amount=("award_amount", "sum"),
+                )
+                .sort_values("total_award_amount", ascending=False)
+                .head(200)
+            )
+            review = recipient_totals.merge(
+                candidates_df[candidates_df["match_source"] == "recipient"],
+                left_on="recipient_name_norm",
+                right_on="name_norm",
+                how="left",
+            )
+            review_path = Path(config["project"]["outputs_dir"]) / "tables" / "recipient_cik_review.csv"
+            review_path.parent.mkdir(parents=True, exist_ok=True)
+            review.to_csv(review_path, index=False)
 
     linked_path = data_dir / "awards_with_cik.parquet"
     awards_with_matches.to_parquet(linked_path, index=False)

@@ -1,6 +1,6 @@
-# Industrial policy subsidy → markup pipeline
+# Industrial policy subsidy -> markup pipeline
 
-End-to-end, reproducible Python pipeline for the research project **“Industrial policy subsidy → markup pipeline (incidence as rents vs capacity)”**.
+End-to-end, reproducible Python pipeline for the research project **"Industrial policy subsidy -> markup pipeline (incidence as rents vs capacity)"**.
 
 ## Requirements
 
@@ -56,6 +56,16 @@ uv run industrial-policy incidence --config-path config/config.yaml
 uv run industrial-policy robustness --config-path config/config.yaml
 ```
 
+## Smoke run (fast)
+
+For quick end-to-end validation on a tiny USAspending window:
+
+```powershell
+uv run industrial-policy all --config-path config/config.smoke.yaml
+```
+
+This writes to `data_smoke/` and `outputs_smoke/` (both ignored by git).
+
 To force re-downloads (otherwise cached chunks/ZIPs are reused):
 
 ```powershell
@@ -93,11 +103,11 @@ If you have a Census concentration file, set the path in `config/config.yaml` un
 Run tests:
 
 ```powershell
-uv run pytest
+uv run --extra dev pytest
 ```
 
 Run linting:
 
 ```powershell
-uv run ruff check .
+uv run --extra dev ruff check .
 ```

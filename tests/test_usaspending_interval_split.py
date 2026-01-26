@@ -17,6 +17,7 @@ def test_interval_split_writes_chunks(monkeypatch, tmp_path):
         adaptive_split_on_422,
         max_attempts,
         backoff_seconds,
+        sleep_seconds,
     ):
         start = datetime.fromisoformat(payload["filters"]["time_period"][0]["start_date"])
         end = datetime.fromisoformat(payload["filters"]["time_period"][0]["end_date"])

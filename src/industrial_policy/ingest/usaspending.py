@@ -1,8 +1,10 @@
 """USAspending ingestion."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -46,6 +48,8 @@ def _post_with_retry(
     for attempt in retrying:
         with attempt:
             response = session.post(url, json=payload, timeout=timeout)
+            if response.status_code == 429:
+                response.raise_for_status()
             if 500 <= response.status_code < 600:
                 response.raise_for_status()
             return response
@@ -56,8 +60,24 @@ def _interval_label(start: datetime, end: datetime) -> str:
     return f"{start.date().isoformat()}_{end.date().isoformat()}"
 
 
+def _split_dates(start_date: pd.Timestamp, end_date: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]:
+    """Split an inclusive [start_date, end_date] interval into two non-empty halves."""
+    days = int((end_date - start_date).days) + 1
+    if days <= 1:
+        raise ValueError("Cannot split a 1-day interval.")
+    mid = start_date + pd.Timedelta(days=math.floor((days - 1) / 2))
+    left_start = start_date
+    left_end = mid
+    right_start = mid + pd.Timedelta(days=1)
+    right_end = end_date
+    if right_start > right_end:  # pragma: no cover
+        raise ValueError("Invalid split produced an empty right interval.")
+    return left_start, left_end, right_start, right_end
+
+
 def _hash_payload(payload: Dict[str, Any]) -> str:
-    return str(abs(hash(json.dumps(payload, sort_keys=True))))
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()
 
 
 def _is_page_limit_422(response: requests.Response) -> bool:
@@ -114,7 +134,8 @@ def _build_intervals(
 def _normalize_award_id(df: pd.DataFrame) -> pd.Series:
     for col in ("award_id", "award_id_fain", "award_generated_internal_id"):
         if col in df.columns:
-            return df[col].astype(str).fillna("")
+            series = df[col].astype("string").fillna("")
+            return series.astype(str)
     return pd.Series([""] * len(df))
 
 
@@ -127,12 +148,14 @@ def _fetch_interval(
     adaptive_split_on_422: bool,
     max_attempts: int,
     backoff_seconds: float,
+    sleep_seconds: float,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     logger = get_logger()
     page = 1
     rows: List[Dict[str, Any]] = []
     stop_reason: Optional[str] = None
     total_pages: Optional[int] = None
+    error: Optional[str] = None
 
     while True:
         page_payload = {**payload, "page": page}
@@ -142,14 +165,20 @@ def _fetch_interval(
             payload["filters"]["time_period"][0]["end_date"],
             page,
         )
-        response = _post_with_retry(
-            session,
-            url,
-            page_payload,
-            request_timeout,
-            max_attempts=max_attempts,
-            backoff_seconds=backoff_seconds,
-        )
+        try:
+            response = _post_with_retry(
+                session,
+                url,
+                page_payload,
+                request_timeout,
+                max_attempts=max_attempts,
+                backoff_seconds=backoff_seconds,
+            )
+        except requests.RequestException as exc:
+            error = str(exc)
+            stop_reason = "request_error"
+            logger.error("USAspending request failed: %s", error)
+            break
         if response.status_code == 422 and adaptive_split_on_422 and _is_page_limit_422(response):
             raise PageLimitError("API page limit hit (422).")
         response.raise_for_status()
@@ -162,11 +191,15 @@ def _fetch_interval(
         page_meta = data.get("page_metadata", {})
         if total_pages is None:
             total_pages = page_meta.get("total_pages")
+        if total_pages is not None and total_pages > max_pages:
+            raise PageLimitError("Interval exceeds max_pages_per_query (total_pages metadata).")
         if page >= max_pages:
             raise PageLimitError("Interval exceeds max_pages_per_query.")
         if total_pages is not None and page >= total_pages:
             stop_reason = "total_pages"
             break
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
         page += 1
 
     df = pd.DataFrame(rows)
@@ -174,6 +207,7 @@ def _fetch_interval(
         "pages_downloaded": page,
         "total_pages": total_pages,
         "stop_reason": stop_reason,
+        "error": error,
     }
 
 
@@ -204,15 +238,16 @@ def _download_interval(
     adaptive_split_on_422: bool,
     max_attempts: int,
     backoff_seconds: float,
+    sleep_seconds: float,
     min_granularity_days: int,
     chunk_path: Path,
     manifest_path: Path,
     force: bool,
-) -> None:
+) -> List[Path]:
     logger = get_logger()
     if chunk_path.exists() and not force:
         logger.info("USAspending chunk exists; skipping %s", chunk_path)
-        return
+        return [chunk_path]
     try:
         df, meta = _fetch_interval(
             session,
@@ -223,36 +258,39 @@ def _download_interval(
             adaptive_split_on_422,
             max_attempts,
             backoff_seconds,
+            sleep_seconds,
         )
         _write_chunk(df, chunk_path, manifest_path, payload, meta)
-    except PageLimitError:
+        return [chunk_path]
+    except PageLimitError as exc:
         start_date = pd.to_datetime(payload["filters"]["time_period"][0]["start_date"])
         end_date = pd.to_datetime(payload["filters"]["time_period"][0]["end_date"])
         days = (end_date - start_date).days + 1
         if days <= min_granularity_days:
             diagnostics = {
                 "error": "Interval cannot be split further.",
+                "exception": str(exc),
                 "start_date": start_date.date().isoformat(),
                 "end_date": end_date.date().isoformat(),
             }
             manifest_path.write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
-            raise
-        mid = start_date + pd.Timedelta(days=math.floor(days / 2))
+            return [chunk_path]
+        left_start, left_end, right_start, right_end = _split_dates(start_date, end_date)
         left = payload.copy()
         right = payload.copy()
         left["filters"] = json.loads(json.dumps(payload["filters"]))
         right["filters"] = json.loads(json.dumps(payload["filters"]))
-        left["filters"]["time_period"][0]["start_date"] = start_date.date().isoformat()
-        left["filters"]["time_period"][0]["end_date"] = mid.date().isoformat()
-        right["filters"]["time_period"][0]["start_date"] = (mid + pd.Timedelta(days=1)).date().isoformat()
-        right["filters"]["time_period"][0]["end_date"] = end_date.date().isoformat()
-        left_chunk = chunk_path.with_name(f"usaspending_{_interval_label(start_date, mid)}.parquet")
+        left["filters"]["time_period"][0]["start_date"] = left_start.date().isoformat()
+        left["filters"]["time_period"][0]["end_date"] = left_end.date().isoformat()
+        right["filters"]["time_period"][0]["start_date"] = right_start.date().isoformat()
+        right["filters"]["time_period"][0]["end_date"] = right_end.date().isoformat()
+        left_chunk = chunk_path.with_name(f"usaspending_{_interval_label(left_start, left_end)}.parquet")
         right_chunk = chunk_path.with_name(
-            f"usaspending_{_interval_label(mid + pd.Timedelta(days=1), end_date)}.parquet"
+            f"usaspending_{_interval_label(right_start, right_end)}.parquet"
         )
         left_manifest = left_chunk.with_suffix(".json")
         right_manifest = right_chunk.with_suffix(".json")
-        _download_interval(
+        left_chunks = _download_interval(
             session,
             url,
             left,
@@ -261,12 +299,13 @@ def _download_interval(
             adaptive_split_on_422,
             max_attempts,
             backoff_seconds,
+            sleep_seconds,
             min_granularity_days,
             left_chunk,
             left_manifest,
             force,
         )
-        _download_interval(
+        right_chunks = _download_interval(
             session,
             url,
             right,
@@ -275,13 +314,13 @@ def _download_interval(
             adaptive_split_on_422,
             max_attempts,
             backoff_seconds,
+            sleep_seconds,
             min_granularity_days,
             right_chunk,
             right_manifest,
             force,
         )
-
-
+        return [*left_chunks, *right_chunks]
 def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
     """Fetch awards from the USAspending API and save to parquet.
 
@@ -311,7 +350,12 @@ def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.
     retry_config = api_config.get("retry", {})
     max_attempts = int(retry_config.get("max_attempts", 8))
     backoff_seconds = float(retry_config.get("backoff_seconds", 1.0))
+    sleep_seconds = float(api_config.get("request_sleep_seconds", 0.0))
     session = requests.Session()
+    user_agent = api_config.get("user_agent") or config.get("sec", {}).get("user_agent")
+    if user_agent:
+        session.headers["User-Agent"] = user_agent
+    session.headers.setdefault("Accept", "application/json")
 
     chunks_dir = data_dir / "usaspending" / "chunks"
     chunks_dir.mkdir(parents=True, exist_ok=True)
@@ -341,7 +385,7 @@ def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.
             label = _interval_label(interval_start, interval_end)
             chunk_path = chunks_dir / f"usaspending_{label}.parquet"
             manifest_path = chunks_dir / f"usaspending_{label}.json"
-            _download_interval(
+            chunk_paths = _download_interval(
                 session,
                 url,
                 payload,
@@ -350,12 +394,21 @@ def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.
                 adaptive_split_on_422,
                 max_attempts,
                 backoff_seconds,
+                sleep_seconds,
                 min_granularity_days,
                 chunk_path,
                 manifest_path,
                 force,
             )
-            all_chunks.append(chunk_path)
+            all_chunks.extend(chunk_paths)
+
+    seen_chunks: set[Path] = set()
+    unique_chunks: List[Path] = []
+    for chunk in all_chunks:
+        if chunk not in seen_chunks:
+            unique_chunks.append(chunk)
+            seen_chunks.add(chunk)
+    all_chunks = unique_chunks
 
     frames = []
     for chunk_path in all_chunks:
@@ -388,16 +441,17 @@ def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.
                 df["award_id"].eq("") & df["award_generated_internal_id"].notna(),
                 df["award_generated_internal_id"].astype(str),
             )
-        df["award_key"] = df["award_id"].where(
-            df["award_id"].ne(""),
-            df["award_id"]
-            + "|"
-            + df.get("recipient_name", "").astype(str)
-            + "|"
-            + df.get("start_date", "").astype(str)
-            + "|"
-            + df.get("award_amount", "").astype(str),
+        recipient_name = (
+            df["recipient_name"].astype(str) if "recipient_name" in df.columns else pd.Series("", index=df.index)
         )
+        start_date = (
+            df["start_date"].astype(str) if "start_date" in df.columns else pd.Series("", index=df.index)
+        )
+        award_amount = (
+            df["award_amount"].astype(str) if "award_amount" in df.columns else pd.Series("", index=df.index)
+        )
+        fallback_key = df["award_id"].astype(str) + "|" + recipient_name + "|" + start_date + "|" + award_amount
+        df["award_key"] = df["award_id"].where(df["award_id"].ne(""), fallback_key)
         before = len(df)
         df = df.drop_duplicates(subset=["award_key"])
         removed = before - len(df)
@@ -406,16 +460,39 @@ def fetch_usaspending_awards(config: Dict[str, Any], force: bool = False) -> pd.
 
     df.to_parquet(output_path, index=False)
     logger.info("Saved awards to %s", output_path)
+    present_chunks = [chunk for chunk in all_chunks if chunk.exists()]
+    missing_chunks = [chunk.name for chunk in all_chunks if not chunk.exists()]
+    incomplete_chunks: List[str] = []
+    for chunk in present_chunks:
+        chunk_manifest_path = chunk.with_suffix(".json")
+        if not chunk_manifest_path.exists():
+            continue
+        try:
+            chunk_meta = json.loads(chunk_manifest_path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if chunk_meta.get("stop_reason") == "request_error":
+            incomplete_chunks.append(chunk.name)
     manifest = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "filters": api_config["filters"],
         "fields": api_config["fields"],
         "page_size": api_config.get("page_size", 100),
+        "expected_chunks": len(all_chunks),
+        "present_chunks": len(present_chunks),
+        "missing_chunks": missing_chunks,
+        "incomplete_chunks": incomplete_chunks,
         "total_rows": len(df),
-        "chunks": [chunk.name for chunk in all_chunks],
+        "chunks": [chunk.name for chunk in present_chunks],
     }
     manifest_path = Path(project["outputs_dir"]) / "logs" / "usaspending_manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     logger.info("Saved USAspending manifest to %s", manifest_path)
+    if missing_chunks or incomplete_chunks:
+        logger.warning(
+            "USAspending ingestion incomplete: %s missing chunks, %s incomplete chunks (re-run ingest).",
+            len(missing_chunks),
+            len(incomplete_chunks),
+        )
     return df

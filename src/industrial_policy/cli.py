@@ -188,16 +188,19 @@ def estimate_cmd(config_path: Path = config_option) -> None:
 
 
 @app.command("all")
-def run_all(config_path: Path = config_option) -> None:
+def run_all(
+    config_path: Path = config_option,
+    force: bool = typer.Option(False, "--force", help="Force re-downloads for ingest steps."),
+) -> None:
     """Run the full pipeline."""
-    ingest_usaspending(config_path)
-    ingest_sec(config_path)
-    match_recipients_cmd(config_path)
-    build_panel_cmd(config_path)
-    match_controls_cmd(config_path)
-    estimate_cmd(config_path)
-    incidence_cmd(config_path)
-    robustness_cmd(config_path)
+    ingest_usaspending(config_path=config_path, force=force)
+    ingest_sec(config_path=config_path, force=force)
+    match_recipients_cmd(config_path=config_path)
+    build_panel_cmd(config_path=config_path)
+    match_controls_cmd(config_path=config_path)
+    estimate_cmd(config_path=config_path)
+    incidence_cmd(config_path=config_path)
+    robustness_cmd(config_path=config_path)
 
 
 @app.command("incidence")
@@ -229,6 +232,24 @@ def doctor_cmd(config_path: Path = config_option) -> None:
         typer.echo("SEC_USER_AGENT: configured")
     else:
         typer.echo("SEC_USER_AGENT: missing (set in .env or config/config.yaml)")
+
+    def _dataset_rows(path: Path) -> int | None:
+        if not path.exists():
+            return None
+        if path.suffix == ".parquet":
+            try:
+                import pyarrow.parquet as pq
+
+                return pq.ParquetFile(path).metadata.num_rows
+            except Exception:
+                return None
+        if path.suffix == ".csv":
+            try:
+                with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    return max(sum(1 for _ in handle) - 1, 0)
+            except Exception:
+                return None
+        return None
 
     checks = [
         (
@@ -266,10 +287,19 @@ def doctor_cmd(config_path: Path = config_option) -> None:
     ]
     typer.echo("\nPipeline checkpoints:")
     for path, command in checks:
-        status = "OK" if path.exists() else "MISSING"
-        typer.echo(f"- {status}: {path}")
+        if not path.exists():
+            status = "MISSING"
+            rows = None
+        else:
+            rows = _dataset_rows(path)
+            status = "EMPTY" if rows == 0 else "OK"
+
+        desc = f" ({rows} rows)" if rows is not None else ""
+        typer.echo(f"- {status}: {path}{desc}")
         if not path.exists():
             typer.echo(f"  -> Run: {command}")
+        elif status == "EMPTY":
+            typer.echo(f"  -> Rebuild: {command}")
 
 if __name__ == "__main__":
     app()
