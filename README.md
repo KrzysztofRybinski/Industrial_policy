@@ -10,12 +10,6 @@ End-to-end, reproducible Python pipeline for the research project **“Industria
 
 ## Setup (Windows)
 
-```powershell
-# From repo root
-uv venv
-uv pip install -e .
-```
-
 For development (tests + linting):
 
 ```powershell
@@ -58,6 +52,15 @@ uv run industrial-policy match recipients --config-path config/config.yaml
 uv run industrial-policy build panel --config-path config/config.yaml
 uv run industrial-policy match controls --config-path config/config.yaml
 uv run industrial-policy estimate --config-path config/config.yaml
+uv run industrial-policy incidence --config-path config/config.yaml
+uv run industrial-policy robustness --config-path config/config.yaml
+```
+
+To force re-downloads (otherwise cached chunks/ZIPs are reused):
+
+```powershell
+uv run industrial-policy ingest usaspending --config-path config/config.yaml --force
+uv run industrial-policy ingest sec --config-path config/config.yaml --force
 ```
 
 A convenience script is also provided:
@@ -70,15 +73,20 @@ scripts/run_pipeline.ps1
 
 All outputs are written to `outputs/`:
 
-- `outputs/tables/` for CSV + LaTeX event-study tables
+- `outputs/tables/` for CSV event-study tables and diagnostics
 - `outputs/figures/` for event-study plots
 - `outputs/logs/` for pipeline logs
 
 ## Data handling
 
-- All downloads are cached in `data/cache/` and `data/raw/`.
+- `data/` and `outputs/` are ignored by git; the pipeline creates all required subfolders at runtime.
+- All downloads are cached in `data/raw/` and `data/derived/` (re-runs reuse cached chunks/ZIPs unless `--force` is used).
 - DuckDB + Parquet are used as intermediate storage for large SEC FSDS files.
 - No proprietary data is required (public USAspending + SEC FSDS).
+
+## Optional HHI input
+
+If you have a Census concentration file, set the path in `config/config.yaml` under `hhi:`. When provided, the pipeline will generate HHI-based heterogeneity outputs; otherwise it logs a skip.
 
 ## Development
 

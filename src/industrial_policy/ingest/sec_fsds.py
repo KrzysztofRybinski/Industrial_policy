@@ -1,6 +1,8 @@
 """SEC Financial Statement Data Sets ingestion."""
 from __future__ import annotations
 
+import hashlib
+import json
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -157,7 +159,15 @@ def build_sec_firm_period_panel(df: pd.DataFrame, tag_map: Dict[str, List[str]])
     return panel
 
 
-def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
+def _sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def fetch_sec_fsds(config: Dict[str, Any], force: bool = False) -> pd.DataFrame:
     """Download and process SEC FSDS data.
 
     Args:
@@ -170,11 +180,16 @@ def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
     project = config["project"]
     data_dir = Path(project["data_dir"])
     raw_dir = data_dir / "raw" / "sec_fsds"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    zip_dir = raw_dir / "zips"
+    extract_root = raw_dir / "extracted"
+    manifest_dir = raw_dir / "manifests"
+    zip_dir.mkdir(parents=True, exist_ok=True)
+    extract_root.mkdir(parents=True, exist_ok=True)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
     derived_dir = data_dir / "derived"
     derived_dir.mkdir(parents=True, exist_ok=True)
     output_path = derived_dir / "sec_firm_period_base.parquet"
-    if output_path.exists():
+    if output_path.exists() and not force:
         logger.info("SEC panel already exists at %s; skipping download.", output_path)
         return pd.read_parquet(output_path)
 
@@ -202,13 +217,29 @@ def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
 
     for year, qtr in _quarters_range(sec_config["start_year"], sec_config["end_year"]):
         url = sec_config["base_zip_url"].format(year=year, q=qtr)
-        zip_path = raw_dir / f"{year}q{qtr}.zip"
-        download_file(url, zip_path, headers=headers, sleep_seconds=sec_config["request_sleep_seconds"])
-        extract_dir = raw_dir / f"{year}q{qtr}"
-        if not extract_dir.exists():
+        zip_path = zip_dir / f"{year}q{qtr}.zip"
+        if not zip_path.exists() or force:
+            download_file(url, zip_path, headers=headers, sleep_seconds=sec_config["request_sleep_seconds"])
+        else:
+            logger.info("SEC zip cached for %sQ%s; skipping download.", year, qtr)
+
+        extract_dir = extract_root / f"{year}q{qtr}"
+        if not extract_dir.exists() or force:
             extract_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(zip_path, "r") as archive:
                 archive.extractall(extract_dir)
+        else:
+            logger.info("SEC extraction cached for %sQ%s; skipping extraction.", year, qtr)
+
+        manifest_path = manifest_dir / f"{year}q{qtr}.json"
+        manifest = {
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+            "zip_path": str(zip_path),
+            "zip_size": zip_path.stat().st_size if zip_path.exists() else None,
+            "zip_sha256": _sha256(zip_path) if zip_path.exists() else None,
+            "extract_dir": str(extract_dir),
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         sub_path = extract_dir / "sub.txt"
         num_path = extract_dir / "num.txt"
@@ -237,6 +268,11 @@ def fetch_sec_fsds(config: Dict[str, Any]) -> pd.DataFrame:
     df = compute_quarterly_from_fsds(df, flow_tags=flow_tags)
 
     panel = build_sec_firm_period_panel(df, tag_map)
+    if "revenue" in panel.columns:
+        negative_revenue = panel["revenue"] < 0
+        if negative_revenue.any():
+            logger.warning("Replacing %s negative revenue values with NaN", negative_revenue.sum())
+            panel.loc[negative_revenue, "revenue"] = pd.NA
 
     panel.to_parquet(output_path, index=False)
     logger.info("Saved SEC panel to %s", output_path)
