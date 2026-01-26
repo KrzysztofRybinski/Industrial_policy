@@ -8,6 +8,8 @@ from typing import Any, Dict
 
 import yaml
 
+from industrial_policy.utils.paths import ensure_dirs
+
 
 def load_config(path: str | Path) -> Dict[str, Any]:
     """Load configuration from YAML.
@@ -31,14 +33,6 @@ def load_config(path: str | Path) -> Dict[str, Any]:
         config.setdefault("sec", {})["user_agent"] = sec_user_agent
         logger.info("SEC_USER_AGENT set; overriding config value")
 
-    project = config.setdefault("project", {})
-    data_dir = Path(project.get("data_dir", "data"))
-    outputs_dir = Path(project.get("outputs_dir", "outputs"))
-    data_dir.mkdir(parents=True, exist_ok=True)
-    outputs_dir.mkdir(parents=True, exist_ok=True)
-    (outputs_dir / "logs").mkdir(parents=True, exist_ok=True)
-    (data_dir / "cache").mkdir(parents=True, exist_ok=True)
-    (data_dir / "raw").mkdir(parents=True, exist_ok=True)
-    (data_dir / "derived").mkdir(parents=True, exist_ok=True)
+    ensure_dirs(config)
 
     return config

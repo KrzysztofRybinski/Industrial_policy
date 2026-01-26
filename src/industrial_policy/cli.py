@@ -8,7 +8,9 @@ import pandas as pd
 import typer
 
 from industrial_policy.analysis.did import run_event_studies
-from industrial_policy.analysis.outputs import save_event_study_outputs
+from industrial_policy.analysis.incidence import run_incidence_analysis
+from industrial_policy.analysis.outputs import save_event_study_outputs, save_event_study_summary
+from industrial_policy.analysis.robustness import run_robustness_suite
 from industrial_policy.analysis.sample_report import write_sample_construction_report
 from industrial_policy.config import load_config
 from industrial_policy.entity.name_matching import match_recipients
@@ -17,12 +19,14 @@ from industrial_policy.features.awards import prepare_awards
 from industrial_policy.features.financials import compute_financial_features
 from industrial_policy.features.panel import build_event_panel
 from industrial_policy.ingest.eu_state_aid import load_eu_state_aid
+from industrial_policy.ingest.census_concentration import ingest_census_concentration
 from industrial_policy.ingest.sec_fsds import fetch_sec_fsds
 from industrial_policy.ingest.usaspending import fetch_usaspending_awards
 from industrial_policy.log import setup_logging
 from industrial_policy.match.diagnostics import write_matching_diagnostics
 from industrial_policy.match.nearest_neighbor import nearest_neighbor_match
 from industrial_policy.match.propensity import build_propensity_scores
+from industrial_policy.utils.paths import ensure_dirs
 from industrial_policy.viz.event_study_plots import plot_event_study
 
 load_dotenv()
@@ -39,6 +43,7 @@ app.add_typer(build_app, name="build")
 
 def _configure(config_path: Path) -> dict:
     config = load_config(config_path)
+    ensure_dirs(config)
     outputs_dir = Path(config["project"]["outputs_dir"])
     setup_logging(outputs_dir / "logs")
     return config
@@ -60,17 +65,23 @@ def _require_file(path: Path, command: str) -> None:
 
 
 @ingest_app.command("usaspending")
-def ingest_usaspending(config_path: Path = config_option) -> None:
+def ingest_usaspending(
+    config_path: Path = config_option,
+    force: bool = typer.Option(False, "--force", help="Re-download USAspending data."),
+) -> None:
     """Fetch USAspending awards."""
     config = _configure(config_path)
-    fetch_usaspending_awards(config)
+    fetch_usaspending_awards(config, force=force)
 
 
 @ingest_app.command("sec")
-def ingest_sec(config_path: Path = config_option) -> None:
+def ingest_sec(
+    config_path: Path = config_option,
+    force: bool = typer.Option(False, "--force", help="Re-download SEC FSDS data."),
+) -> None:
     """Fetch SEC FSDS data."""
     config = _configure(config_path)
-    fetch_sec_fsds(config)
+    fetch_sec_fsds(config, force=force)
 
 
 @ingest_app.command("eu")
@@ -115,6 +126,7 @@ def build_panel_cmd(config_path: Path = config_option) -> None:
     sec_panel = pd.read_parquet(sec_path)
     sec_features = compute_financial_features(sec_panel)
     sec_features.to_parquet(data_dir / "sec_firm_period_features.parquet", index=False)
+    ingest_census_concentration(config)
     build_event_panel(awards, sec_features, config)
 
 
@@ -166,6 +178,7 @@ def estimate_cmd(config_path: Path = config_option) -> None:
 
     results = run_event_studies(treated_panel, control_pool, matches, config)
     save_event_study_outputs(results, config["project"]["outputs_dir"])
+    save_event_study_summary(results, config["project"]["outputs_dir"])
     for outcome, payload in results.items():
         coef_df = payload["coefficients"]
         if not coef_df.empty:
@@ -183,6 +196,22 @@ def run_all(config_path: Path = config_option) -> None:
     build_panel_cmd(config_path)
     match_controls_cmd(config_path)
     estimate_cmd(config_path)
+    incidence_cmd(config_path)
+    robustness_cmd(config_path)
+
+
+@app.command("incidence")
+def incidence_cmd(config_path: Path = config_option) -> None:
+    """Compute incidence-in-dollars outputs."""
+    config = _configure(config_path)
+    run_incidence_analysis(config)
+
+
+@app.command("robustness")
+def robustness_cmd(config_path: Path = config_option) -> None:
+    """Run robustness suite."""
+    config = _configure(config_path)
+    run_robustness_suite(config)
 
 
 @app.command("doctor")
@@ -221,6 +250,18 @@ def doctor_cmd(config_path: Path = config_option) -> None:
         (
             data_dir / "derived" / "matches.parquet",
             f"uv run industrial-policy match controls --config-path {config_path}",
+        ),
+        (
+            data_dir / "derived" / "event_panel_stacked.parquet",
+            f"uv run industrial-policy build panel --config-path {config_path}",
+        ),
+        (
+            outputs_dir / "tables" / "event_study_summary.csv",
+            f"uv run industrial-policy estimate --config-path {config_path}",
+        ),
+        (
+            outputs_dir / "tables" / "incidence_ratios_summary.csv",
+            f"uv run industrial-policy incidence --config-path {config_path}",
         ),
     ]
     typer.echo("\nPipeline checkpoints:")

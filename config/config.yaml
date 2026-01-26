@@ -23,10 +23,25 @@ usaspending:
     - "NAICS"
     - "Award Description"
     - "Recipient DUNS Number"
+    - "Recipient UEI"
+    - "Recipient Parent Name"
+    - "Recipient Parent UEI"
+    - "Recipient Parent DUNS Number"
+    - "Recipient City Name"
+    - "Recipient State Code"
   page_size: 100
-  max_pages: 2000
-  max_records: null
+  max_pages_per_query: 450
   request_timeout_seconds: 60
+  retry:
+    max_attempts: 8
+    backoff_seconds: 1.0
+  chunking:
+    enable: true
+    initial_granularity: "quarter"
+    min_granularity_days: 1
+    adaptive_split_on_422: true
+  cache_mode: "parquet_chunks"
+  force_refresh: false
   subawards: false
 
 sec:
@@ -72,3 +87,15 @@ analysis:
     enable_hhi: true
     hhi_source: "census_2017"
     high_hhi_cut: 2500
+  robustness:
+    pre_post_windows:
+      - {pre: 6, post: 10}
+      - {pre: 8, post: 12}
+    exclude_periods:
+      - {start: "2020-04-01", end: "2021-12-31"}
+
+hhi:
+  enable: true
+  census_file: "data/manual/census_hhi.csv"
+  naics_column: "naics"
+  hhi_column: "hhi"

@@ -25,8 +25,21 @@ def nearest_neighbor_match(propensity: pd.DataFrame, config: Dict[str, Any], k: 
     logger = get_logger()
     matches = []
 
+    if propensity.empty:
+        logger.warning("Propensity data empty; writing empty matches.")
+        output_path = Path(config["project"]["data_dir"]) / "derived" / "matches.parquet"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame().to_parquet(output_path, index=False)
+        return pd.DataFrame()
+
     treated = propensity[propensity["treated"] == 1].copy()
     controls = propensity[propensity["treated"] == 0].copy()
+    if treated.empty or controls.empty:
+        logger.warning("Insufficient treated/control sample for matching.")
+        output_path = Path(config["project"]["data_dir"]) / "derived" / "matches.parquet"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame().to_parquet(output_path, index=False)
+        return pd.DataFrame()
 
     treated["sic2"] = treated["sic"].astype(str).str[:2]
     controls["sic2"] = controls["sic"].astype(str).str[:2]
