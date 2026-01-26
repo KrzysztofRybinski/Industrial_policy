@@ -209,6 +209,8 @@ __marimo__/
 # Project data and outputs
 data/
 outputs/
+data_smoke/
+outputs_smoke/
 .env
 data/**/*.parquet
 data/**/*.duckdb
