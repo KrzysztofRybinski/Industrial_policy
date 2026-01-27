@@ -155,7 +155,44 @@ def _fetch_interval(
     rows: List[Dict[str, Any]] = []
     stop_reason: Optional[str] = None
     total_pages: Optional[int] = None
+    has_next: Optional[bool] = None
     error: Optional[str] = None
+
+    start_date = pd.to_datetime(payload["filters"]["time_period"][0]["start_date"], errors="coerce")
+    end_date = pd.to_datetime(payload["filters"]["time_period"][0]["end_date"], errors="coerce")
+    days = None
+    if pd.notna(start_date) and pd.notna(end_date):
+        days = int((end_date - start_date).days) + 1
+
+    # Preflight: cheaply detect whether the interval will exceed max_pages.
+    # USAspending's `page_metadata` uses `hasNext`, not `total_pages`.
+    if days is not None and days > 1 and max_pages >= 1:
+        probe_payload = {**payload, "page": max_pages}
+        try:
+            probe_response = _post_with_retry(
+                session,
+                url,
+                probe_payload,
+                request_timeout,
+                max_attempts=max_attempts,
+                backoff_seconds=backoff_seconds,
+            )
+        except requests.RequestException:
+            probe_response = None
+        if probe_response is not None:
+            if (
+                probe_response.status_code == 422
+                and adaptive_split_on_422
+                and _is_page_limit_422(probe_response)
+            ):
+                raise PageLimitError("API page limit hit (422).")
+            probe_response.raise_for_status()
+            probe_data = probe_response.json()
+            probe_results = probe_data.get("results", [])
+            probe_meta = probe_data.get("page_metadata", {})
+            probe_has_next = probe_meta.get("hasNext")
+            if probe_results and probe_has_next is True:
+                raise PageLimitError("Interval exceeds max_pages_per_query (preflight).")
 
     while True:
         page_payload = {**payload, "page": page}
@@ -191,13 +228,12 @@ def _fetch_interval(
         page_meta = data.get("page_metadata", {})
         if total_pages is None:
             total_pages = page_meta.get("total_pages")
-        if total_pages is not None and total_pages > max_pages:
-            raise PageLimitError("Interval exceeds max_pages_per_query (total_pages metadata).")
+        has_next = page_meta.get("hasNext")
+        if has_next is False:
+            stop_reason = "no_next_page"
+            break
         if page >= max_pages:
             raise PageLimitError("Interval exceeds max_pages_per_query.")
-        if total_pages is not None and page >= total_pages:
-            stop_reason = "total_pages"
-            break
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
         page += 1
@@ -206,6 +242,7 @@ def _fetch_interval(
     return df, {
         "pages_downloaded": page,
         "total_pages": total_pages,
+        "has_next": has_next,
         "stop_reason": stop_reason,
         "error": error,
     }

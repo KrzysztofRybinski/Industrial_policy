@@ -46,7 +46,7 @@ Or run steps independently:
 
 ```powershell
 uv run industrial-policy doctor --config-path config/config.yaml
-uv run industrial-policy ingest usaspending --config-path config/config.yaml
+uv run industrial-policy ingest usaspending-download --config-path config/config.yaml
 uv run industrial-policy ingest sec --config-path config/config.yaml
 uv run industrial-policy match recipients --config-path config/config.yaml
 uv run industrial-policy build panel --config-path config/config.yaml
@@ -55,6 +55,8 @@ uv run industrial-policy estimate --config-path config/config.yaml
 uv run industrial-policy incidence --config-path config/config.yaml
 uv run industrial-policy robustness --config-path config/config.yaml
 ```
+
+The legacy, slower USAspending crawler is still available as `industrial-policy ingest usaspending`.
 
 ## Smoke run (fast)
 
@@ -69,7 +71,7 @@ This writes to `data_smoke/` and `outputs_smoke/` (both ignored by git).
 To force re-downloads (otherwise cached chunks/ZIPs are reused):
 
 ```powershell
-uv run industrial-policy ingest usaspending --config-path config/config.yaml --force
+uv run industrial-policy ingest usaspending-download --config-path config/config.yaml --force
 uv run industrial-policy ingest sec --config-path config/config.yaml --force
 ```
 

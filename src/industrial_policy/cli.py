@@ -22,6 +22,7 @@ from industrial_policy.ingest.eu_state_aid import load_eu_state_aid
 from industrial_policy.ingest.census_concentration import ingest_census_concentration
 from industrial_policy.ingest.sec_fsds import fetch_sec_fsds
 from industrial_policy.ingest.usaspending import fetch_usaspending_awards
+from industrial_policy.ingest.usaspending_download import fetch_usaspending_awards_download
 from industrial_policy.log import setup_logging
 from industrial_policy.match.diagnostics import write_matching_diagnostics
 from industrial_policy.match.nearest_neighbor import nearest_neighbor_match
@@ -74,6 +75,16 @@ def ingest_usaspending(
     fetch_usaspending_awards(config, force=force)
 
 
+@ingest_app.command("usaspending-download")
+def ingest_usaspending_download(
+    config_path: Path = config_option,
+    force: bool = typer.Option(False, "--force", help="Re-download USAspending data."),
+) -> None:
+    """Fetch USAspending awards via Download API (faster for long spans)."""
+    config = _configure(config_path)
+    fetch_usaspending_awards_download(config, force=force)
+
+
 @ingest_app.command("sec")
 def ingest_sec(
     config_path: Path = config_option,
@@ -99,7 +110,7 @@ def match_recipients_cmd(config_path: Path = config_option) -> None:
     awards_path = data_dir / "usaspending_awards.parquet"
     _require_file(
         awards_path,
-        f"uv run industrial-policy ingest usaspending --config-path {config_path}",
+        f"uv run industrial-policy ingest usaspending-download --config-path {config_path}",
     )
     awards = pd.read_parquet(awards_path)
     awards = prepare_awards(awards, config)
@@ -193,7 +204,7 @@ def run_all(
     force: bool = typer.Option(False, "--force", help="Force re-downloads for ingest steps."),
 ) -> None:
     """Run the full pipeline."""
-    ingest_usaspending(config_path=config_path, force=force)
+    ingest_usaspending_download(config_path=config_path, force=force)
     ingest_sec(config_path=config_path, force=force)
     match_recipients_cmd(config_path=config_path)
     build_panel_cmd(config_path=config_path)
@@ -254,7 +265,7 @@ def doctor_cmd(config_path: Path = config_option) -> None:
     checks = [
         (
             data_dir / "derived" / "usaspending_awards.parquet",
-            f"uv run industrial-policy ingest usaspending --config-path {config_path}",
+            f"uv run industrial-policy ingest usaspending-download --config-path {config_path}",
         ),
         (
             data_dir / "derived" / "sec_firm_period_base.parquet",

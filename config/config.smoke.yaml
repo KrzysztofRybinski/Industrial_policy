@@ -36,6 +36,12 @@ usaspending:
   retry:
     max_attempts: 8
     backoff_seconds: 1.0
+  download:
+    file_format: "csv"
+    poll_seconds: 2
+    max_wait_seconds: 3600
+    initial_granularity: "month"
+    min_granularity_days: 1
   chunking:
     enable: true
     initial_granularity: "week"
